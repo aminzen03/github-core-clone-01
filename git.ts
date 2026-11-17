@@ -197,15 +197,15 @@ export function parsePack(buf: Buffer, lookup?: (oid: string) => PackEntry | und
     let data: Buffer;
     let baseOid: string | null = null;
     let baseOffset: number | null = null;
+    // The last object's stream ends at the pack's end (its consumed length is
+    // never read again), so it skips boundary detection entirely.
+    const last = n === count - 1;
     if (type === OBJ_OFS_DELTA) {
       const [baseOff, after] = readOfsOffset(buf, off);
       baseOffset = start - baseOff;
       off = after;
       const inflated = inflateSync(buf.subarray(off));
-      // inflateSync consumes the whole remaining buffer; find the consumed length
-      // by re-inflating with a streaming-safe approach: use the zlib stream length.
-      const consumed = zlibConsumed(buf.subarray(off));
-      off += consumed;
+      if (!last) off += inflateObjectConsumed(buf, off, inflated);
       const base = byOffset.get(baseOffset);
       if (!base) throw new Error('ofs-delta base not found');
       data = applyDelta(base.data, inflated);
@@ -214,16 +214,14 @@ export function parsePack(buf: Buffer, lookup?: (oid: string) => PackEntry | und
       baseOid = buf.subarray(off, off + 20).toString('hex');
       off += 20;
       const inflated = inflateSync(buf.subarray(off));
-      const consumed = zlibConsumed(buf.subarray(off));
-      off += consumed;
+      if (!last) off += inflateObjectConsumed(buf, off, inflated);
       const base = byOid.get(baseOid) ?? lookup?.(baseOid);
       if (!base) throw new Error('ref-delta base not found');
       data = applyDelta(base.data, inflated);
       objType = base.type;
     } else {
       const inflated = inflateSync(buf.subarray(off));
-      const consumed = zlibConsumed(buf.subarray(off));
-      off += consumed;
+      if (!last) off += inflateObjectConsumed(buf, off, inflated);
       data = inflated;
       if (data.length !== size) throw new Error('pack object size mismatch');
     }
@@ -234,6 +232,23 @@ export function parsePack(buf: Buffer, lookup?: (oid: string) => PackEntry | und
     byOid.set(oid, entry);
   }
   return entries;
+}
+
+/** Bytes the already-inflated zlib stream at buf[off..] occupies.
+ *
+ * A deflate stream carries no length, so the boundary normally costs a
+ * binary search of trial inflations (zlibConsumed below, ~17 inflateSync
+ * calls an object). The fast path re-deflates the inflated data and checks
+ * the bytes: deflate is deterministic for fixed input + settings, so a byte
+ * match proves the length exactly. Any sender whose deflate settings differ
+ * (a mismatch is detected, never assumed) falls back to the binary search,
+ * so correctness never depends on the fast path succeeding. */
+function inflateObjectConsumed(buf: Buffer, off: number, data: Buffer): number {
+  const re = deflateSync(data);
+  if (off + re.length <= buf.length && buf.subarray(off, off + re.length).equals(re)) {
+    return re.length;
+  }
+  return zlibConsumed(buf.subarray(off));
 }
 
 /** Number of bytes the zlib stream at the start of buf occupies. */
