@@ -18,12 +18,16 @@ export const VIEWER = Object.freeze({
   type: 'User',
 });
 
-/** Trial clock: ISO timestamp every created/updated field carries. */
+/** Trial clock: ISO timestamp every created/updated field carries. The env
+ *  var is fixed for the process lifetime, so the value is computed once. */
+let cachedNow: string | null = null;
 export function trialNowIso(): string {
-  const raw = process.env.MAKEFUN_TRIAL_NOW ?? '';
-  const ms = Date.parse(raw);
-  if (Number.isFinite(ms)) return new Date(ms).toISOString();
-  return '2025-01-01T00:00:00.000Z';
+  if (cachedNow === null) {
+    const raw = process.env.MAKEFUN_TRIAL_NOW ?? '';
+    const ms = Date.parse(raw);
+    cachedNow = Number.isFinite(ms) ? new Date(ms).toISOString() : '2025-01-01T00:00:00.000Z';
+  }
+  return cachedNow;
 }
 
 /** Opaque, deterministic global ids (GraphQL `id`): never the bare number. */
@@ -181,10 +185,10 @@ export class Store {
 
   // -- git objects -----------------------------------------------------------
 
-  putObject(repo: Repo, type: number, data: Buffer): string {
-    const oid = hashObject(type, data);
-    if (!repo.objects.has(oid)) repo.objects.set(oid, { type, data });
-    return oid;
+  putObject(repo: Repo, type: number, data: Buffer, oid?: string): string {
+    const id = oid ?? hashObject(type, data);
+    if (!repo.objects.has(id)) repo.objects.set(id, { type, data });
+    return id;
   }
 
   getObject(repo: Repo, oid: string): GitObject | undefined {
