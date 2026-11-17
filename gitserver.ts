@@ -146,9 +146,10 @@ export function advertiseV0Receive(repo: Repo): Buffer {
   return Buffer.concat(lines);
 }
 
-/** v2 capability advertisement (info/refs answer to a `Git-Protocol: version=2` GET). */
+/** v2 capability advertisement (info/refs answer to a `Git-Protocol: version=2` GET). Static: built once. */
+const ADVERTISE_V2_BUF: Buffer = pktLines(['version 2\n', 'ls-refs=unborn\n', 'fetch=shallow filter\n', 'object-format=sha1\n']);
 export function advertiseV2(): Buffer {
-  return pktLines(['version 2\n', 'ls-refs=unborn\n', 'fetch=shallow filter\n', 'object-format=sha1\n']);
+  return ADVERTISE_V2_BUF;
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +525,7 @@ export function handleReceivePack(store: Store, repo: Repo, body: Buffer): PushR
         return o ? { oid, type: o.type, data: o.data } : undefined;
       };
       const entries = parsePack(packBytes, lookup);
-      for (const e of entries) store.putObject(repo, e.type, e.data);
+      for (const e of entries) store.putObject(repo, e.type, e.data, e.oid);
       reportLines.push('unpack ok\n');
     } catch (err) {
       reportLines.push(`unpack ${(err as Error).message}\n`);
